@@ -1,0 +1,4 @@
+metric,threads,value
+fma_gflops,1,57.81
+# check a[7]=7
+triad_gbs,1,19.98
