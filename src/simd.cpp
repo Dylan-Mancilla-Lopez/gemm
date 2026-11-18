@@ -26,9 +26,8 @@ Buf alloc_buf(std::size_t n) {
 }
 }  // namespace
 
-// v3: microkernel en registros sobre las matrices originales. B se lee por filas (bien),
-// pero cada k lee A con salto de K doubles entre filas: 6 líneas de caché distintas por k.
-// Para los bordes se copian los datos a tiles con ceros.
+// B se lee por filas (bien), pero cada k lee A con salto de K doubles entre filas: 6 líneas
+// de caché distintas por k. Para los bordes se copian los datos a tiles con ceros.
 void simd_unpacked(int M, int N, int K, const double* A, const double* B, double* C) {
   std::memset(C, 0, sizeof(double) * M * N);
   constexpr int KC = 256;
@@ -60,9 +59,9 @@ void simd_unpacked(int M, int N, int K, const double* A, const double* B, double
 
 namespace {
 
-// Empaca A[mc×kc] en micropaneles de MR filas. Dentro de cada micropanel, para cada k
-// van los MR valores de esa columna seguidos: el kernel lee A de forma 100 % secuencial.
-// Las filas que faltan en el último micropanel se rellenan con ceros.
+/// Empaca A[mc×kc] en micropaneles de MR filas. Dentro de cada micropanel, para cada k
+/// van los MR valores de esa columna seguidos: el kernel lee A de forma 100 % secuencial.
+/// Las filas que faltan en el último micropanel se rellenan con ceros.
 void pack_A(int mc, int kc, const double* A, int lda, double* Ap) {
   for (int i = 0; i < mc; i += MR) {
     const int mr = std::min(MR, mc - i);
@@ -74,7 +73,7 @@ void pack_A(int mc, int kc, const double* A, int lda, double* Ap) {
   }
 }
 
-// Empaca B[kc×nc] en micropaneles de NR columnas: para cada k, NR valores contiguos.
+/// Empaca B[kc×nc] en micropaneles de NR columnas: para cada k, NR valores contiguos.
 void pack_B(int kc, int nc, const double* B, int ldb, double* Bp) {
   for (int j = 0; j < nc; j += NR) {
     const int nr = std::min(NR, nc - j);
@@ -93,9 +92,12 @@ void pack_B(int kc, int nc, const double* B, int ldb, double* Bp) {
 
 }  // namespace
 
-// v4/v5: los cinco bucles de BLIS. jc (NC) → pc (KC, empaca B) → ic (MC, empaca A)
-// → jr (NR) → ir (MR) → microkernel. Con threads > 1 se reparte el bucle ic con OpenMP:
-// B empacado se comparte (solo lectura) y cada hilo empaca su propio bloque de A.
+// Los cinco bucles de BLIS: jc (NC) → pc (KC, empaca B) → ic (MC, empaca A) → jr (NR)
+// → ir (MR) → microkernel. Con threads > 1 se reparte el bucle ic con OpenMP: B empacado se
+// comparte (solo lectura) y cada hilo empaca su propio bloque de A.
+//
+// El anidamiento es deliberado: es el hot path medido, y extraer jr/ir e ic a funciones
+// separadas costó ~6 % de GFLOP/s (n = 1024, 1 hilo, A/B en la misma sesión).
 void packed(int M, int N, int K, const double* A, const double* B, double* C, Blocking blk,
             int threads) {
   std::memset(C, 0, sizeof(double) * M * N);

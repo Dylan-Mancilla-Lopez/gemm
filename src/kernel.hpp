@@ -1,16 +1,18 @@
 #pragma once
 #include <immintrin.h>
 
-// Microkernel 6×8: 12 acumuladores ymm (6 filas × 2 vectores de 4 doubles) + 2 registros
-// para la fila de B + 1 para el broadcast de A = 15 de los 16 ymm disponibles en AVX2.
-// Por cada k: 2 loads de B, 6 broadcasts de A y 12 FMAs (96 FLOP).
 namespace gemm::detail {
 
 inline constexpr int MR = 6;
 inline constexpr int NR = 8;
 
-// a(r, k) = a[r * rs_a + k * cs_a]; b(k, j) = b[k * rs_b + j] (fila de B contigua).
-// Acumula el resultado en C (C += A·B) con stride ldc.
+/// Acumula C += A·B para un tile de 6×8 con stride ldc.
+/// a(r, k) = a[r * rs_a + k * cs_a]; b(k, j) = b[k * rs_b + j] (fila de B contigua).
+///
+/// 12 acumuladores ymm (6 filas × 2 vectores de 4 doubles) + 2 registros para la fila de B
+/// + 1 para el broadcast de A = 15 de los 16 ymm de AVX2. Por cada k: 2 loads de B,
+/// 6 broadcasts de A y 12 FMAs (96 FLOP). Está desenrollado a mano para que los 12
+/// acumuladores se queden en registros.
 inline void kernel_6x8(int kc, const double* a, long rs_a, long cs_a, const double* b, long rs_b,
                        double* c, long ldc) {
   __m256d c00 = _mm256_setzero_pd(), c01 = _mm256_setzero_pd();
@@ -31,17 +33,18 @@ inline void kernel_6x8(int kc, const double* a, long rs_a, long cs_a, const doub
     x = _mm256_broadcast_sd(ak + 4 * rs_a); c40 = _mm256_fmadd_pd(x, b0, c40); c41 = _mm256_fmadd_pd(x, b1, c41);
     x = _mm256_broadcast_sd(ak + 5 * rs_a); c50 = _mm256_fmadd_pd(x, b0, c50); c51 = _mm256_fmadd_pd(x, b1, c51);
   }
-  auto acc = [&](int r, __m256d lo, __m256d hi) {
-    double* cr = c + r * ldc;
-    _mm256_storeu_pd(cr, _mm256_add_pd(_mm256_loadu_pd(cr), lo));
-    _mm256_storeu_pd(cr + 4, _mm256_add_pd(_mm256_loadu_pd(cr + 4), hi));
+  auto add_to_row = [&](int r, __m256d lo, __m256d hi) {
+    double* row = c + r * ldc;
+    _mm256_storeu_pd(row, _mm256_add_pd(_mm256_loadu_pd(row), lo));
+    _mm256_storeu_pd(row + 4, _mm256_add_pd(_mm256_loadu_pd(row + 4), hi));
   };
-  acc(0, c00, c01); acc(1, c10, c11); acc(2, c20, c21);
-  acc(3, c30, c31); acc(4, c40, c41); acc(5, c50, c51);
+  add_to_row(0, c00, c01); add_to_row(1, c10, c11); add_to_row(2, c20, c21);
+  add_to_row(3, c30, c31); add_to_row(4, c40, c41); add_to_row(5, c50, c51);
 }
 
-// Bordes (mr < 6 o nr < 8): el kernel escribe en un tile temporal de 6×8 y luego se suma
-// solo la parte válida. `a` y `b` deben tener datos legibles (o ceros) en el tile completo.
+/// Tile de borde (mr < 6 o nr < 8): el kernel escribe en un tile temporal de 6×8 y luego
+/// se suma solo la parte válida. `a` y `b` deben tener datos legibles (o ceros) en el tile
+/// completo.
 inline void kernel_edge(int mr, int nr, int kc, const double* a, long rs_a, long cs_a,
                         const double* b, long rs_b, double* c, long ldc) {
   alignas(32) double tmp[MR * NR] = {};

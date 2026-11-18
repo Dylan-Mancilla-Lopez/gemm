@@ -1,5 +1,6 @@
-// Cuerpo compartido por simple.cpp (-O2) y simple_o3.cpp (-O3). Ver README: con -O2
-// GCC 16 no vectoriza estos bucles; con -O3 sí.
+// Cuerpo compartido por simple.cpp (-O2) y simple_o3.cpp (-O3): se incluye dos veces para
+// medir el mismo código con los dos niveles. Con -O2 GCC 16 no vectoriza estos bucles; con
+// -O3 sí (ver README).
 
 // v0: el bucle interno recorre B por columna (salto de N doubles): casi cada acceso a B
 // es una línea de caché nueva, y el producto punto no se vectoriza.
@@ -26,7 +27,8 @@ void loop_ikj(int M, int N, int K, const double* A, const double* B, double* C) 
 }
 
 // v2: ikj por bloques. Un tile TK×TJ de B se reutiliza para TI filas de A mientras sigue
-// en caché, en vez de recorrer B entera por cada fila.
+// en caché, en vez de recorrer B entera por cada fila. Los seis bucles quedan juntos a
+// propósito: extraer el tile a una función bajó tiled_O3 de ~7.0 a ~6.3 GFLOP/s (n = 1024).
 void tiled(int M, int N, int K, const double* A, const double* B, double* C, int TI, int TK,
            int TJ) {
   std::memset(C, 0, sizeof(double) * M * N);
